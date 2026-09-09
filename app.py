@@ -64,6 +64,26 @@ def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
     return buffer.getvalue()
 
 
+def _color_occupancy(val: float) -> str:
+    """Color de fondo para la celda de % ocupacion."""
+    if val >= 100:
+        return "background-color: #f8d7da; color: #842029"
+    if val >= 85:
+        return "background-color: #ffe5d0; color: #8a4b1a"
+    if val >= 50:
+        return "background-color: #fff3cd; color: #664d03"
+    return "background-color: #d1e7dd; color: #0f5132"
+
+
+def style_summary(df: pd.DataFrame):
+    """Aplica formato condicional a la tabla resumen."""
+    styler = df.style
+    if "% Ocupacion" in df.columns:
+        styler = styler.map(_color_occupancy, subset=["% Ocupacion"])
+    fmt = {c: "{:.1f}" for c in df.columns if df[c].dtype.kind in "fi"}
+    return styler.format(fmt)
+
+
 def build_workload_chart(
     tasks_df: pd.DataFrame, summary: pd.DataFrame, capacity_hours: float
 ) -> go.Figure:
@@ -172,7 +192,7 @@ def render_person_view(
         margin=dict(l=10, r=10, t=20, b=10),
         legend=dict(orientation="h", y=1.05),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Distribucion por lista/proyecto
     col_a, col_b = st.columns(2)
@@ -188,7 +208,7 @@ def render_person_view(
                 by_list, names="list_name", values="hours_scheduled", hole=0.4,
             )
             fig_pie.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10))
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width="stretch")
         else:
             st.caption("Sin horas estimadas por lista.")
 
@@ -221,7 +241,7 @@ def render_person_view(
             "desviacion": "Desviacion (h)",
             "status": "Estado",
         }),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -242,11 +262,37 @@ capacity = st.sidebar.number_input(
 )
 st.sidebar.markdown("### Periodo a analizar")
 today = date.today()
-default_start = today - timedelta(days=today.weekday())  # lunes de esta semana
-default_end = default_start + timedelta(days=6)  # domingo
-c1, c2 = st.sidebar.columns(2)
-period_start = c1.date_input("Desde", value=default_start)
-period_end = c2.date_input("Hasta", value=default_end)
+preset = st.sidebar.radio(
+    "Rango rapido",
+    ["Esta semana", "Este mes", "Este trimestre", "Personalizado"],
+    index=0,
+)
+
+_week_start = today - timedelta(days=today.weekday())
+if preset == "Esta semana":
+    default_start, default_end = _week_start, _week_start + timedelta(days=6)
+elif preset == "Este mes":
+    default_start = today.replace(day=1)
+    _nm = (default_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    default_end = _nm - timedelta(days=1)
+elif preset == "Este trimestre":
+    q_start_month = 3 * ((today.month - 1) // 3) + 1
+    default_start = today.replace(month=q_start_month, day=1)
+    _qm = default_start.month + 3
+    _y = default_start.year + (1 if _qm > 12 else 0)
+    _qm = _qm - 12 if _qm > 12 else _qm
+    default_end = date(_y, _qm, 1) - timedelta(days=1)
+else:
+    default_start = _week_start
+    default_end = _week_start + timedelta(days=6)
+
+if preset == "Personalizado":
+    c1, c2 = st.sidebar.columns(2)
+    period_start = c1.date_input("Desde", value=default_start)
+    period_end = c2.date_input("Hasta", value=default_end)
+else:
+    period_start, period_end = default_start, default_end
+    st.sidebar.caption(f"{period_start:%d/%m/%Y} → {period_end:%d/%m/%Y}")
 
 only_team = st.sidebar.checkbox(
     "Solo equipo de la vista (12 personas)", value=True,
@@ -256,7 +302,9 @@ only_team = st.sidebar.checkbox(
 if st.sidebar.button("Actualizar datos"):
     st.cache_data.clear()
 
-st.title("Tablero de Capacidad - Plataformas Alternas")
+th1, th2 = st.columns([4, 1])
+th1.title("Tablero de Capacidad - Plataformas Alternas")
+th2.caption(f"Datos al\n{datetime.now():%d/%m/%Y %H:%M}")
 
 if not token or not team_id or not view_id:
     st.info("Ingresa API Token, Team ID y View ID en la barra lateral para comenzar.")
@@ -316,13 +364,52 @@ if st.session_state.selected_dev:
 
 # ================= VISTA GENERAL =================
 else:
-    # KPIs
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Desarrolladores", len(summary))
-    k2.metric("Horas programadas", round(summary["hours_scheduled"].sum(), 1))
-    k3.metric("Horas ejecutadas", round(summary["hours_executed"].sum(), 1))
-    con_cap = (summary["status"] == "Con capacidad").sum()
-    k4.metric("Con capacidad libre", int(con_cap))
+    # ----- Resumen ejecutivo -----
+    n_devs = len(summary)
+    total_cap = capacity_hours * n_devs
+    total_prog = summary["hours_scheduled"].sum()
+    horas_libres = round(max(total_cap - total_prog, 0), 1)
+    ocup_prom = round(total_prog / total_cap * 100, 1) if total_cap else 0
+    total_exec = summary["hours_executed"].sum()
+    # Precision de estimacion a nivel equipo
+    desv_pct = (
+        round((total_exec - total_prog) / total_prog * 100, 1) if total_prog else 0
+    )
+
+    st.markdown("#### Resumen ejecutivo")
+    e1, e2, e3, e4, e5 = st.columns(5)
+    e1.metric("Equipo", n_devs)
+    e2.metric("Ocupacion promedio", f"{ocup_prom:.0f}%")
+    e3.metric("Horas libres del equipo", f"{horas_libres:.0f}",
+              help="Capacidad total no comprometida en el periodo.")
+    e4.metric("Personas con capacidad",
+              int((summary["status"] == "Con capacidad").sum()))
+    e5.metric("Desviacion estimacion", f"{desv_pct:+.0f}%",
+              help="Ejecutado vs estimado del equipo. + = tarda mas de lo estimado.")
+
+    # ----- Panel de alertas / semaforo -----
+    sobrecargados = summary[summary["status"] == "Sobrecargado"]
+    subutilizados = summary[summary["status"] == "Con capacidad"]
+    ca, cb = st.columns(2)
+    with ca:
+        if not sobrecargados.empty:
+            st.error(f"⚠ {len(sobrecargados)} persona(s) sobrecargada(s)")
+            for _, r in sobrecargados.head(5).iterrows():
+                exceso = r["hours_scheduled"] - r["capacity_hours"]
+                st.caption(f"• {r['developer']}: {r['occupancy_pct']:.0f}% "
+                           f"(+{exceso:.0f}h sobre capacidad)")
+        else:
+            st.success("Sin personas sobrecargadas")
+    with cb:
+        if not subutilizados.empty:
+            st.info(f"✓ {len(subutilizados)} persona(s) con capacidad disponible")
+            for _, r in subutilizados.head(5).iterrows():
+                st.caption(f"• {r['developer']}: puede recibir "
+                           f"~{r['available_hours']:.0f}h mas")
+        else:
+            st.caption("Nadie con holgura significativa.")
+
+    st.divider()
 
     st.subheader("Carga de trabajo por desarrollador")
     st.caption(
@@ -331,7 +418,7 @@ else:
     )
     fig = build_workload_chart(tasks_df, summary, capacity_hours)
     event = st.plotly_chart(
-        fig, use_container_width=True, on_select="rerun", key="workload_chart"
+        fig, width="stretch", on_select="rerun", key="workload_chart"
     )
 
     # Capturar click en una barra -> abrir vista de esa persona
@@ -352,38 +439,47 @@ else:
         st.rerun()
 
     st.subheader("Detalle de capacidad")
+    summary_disp = summary.rename(
+        columns={
+            "developer": "Desarrollador",
+            "hours_scheduled": "Horas programadas",
+            "hours_executed": "Horas ejecutadas",
+            "capacity_hours": "Capacidad (h)",
+            "occupancy_pct": "% Ocupacion",
+            "available_hours": "Horas disponibles",
+            "status": "Estado",
+        }
+    )
     st.dataframe(
-        summary.rename(
-            columns={
-                "developer": "Desarrollador",
-                "hours_scheduled": "Horas programadas",
-                "hours_executed": "Horas ejecutadas",
-                "capacity_hours": "Capacidad (h)",
-                "occupancy_pct": "% Ocupacion",
-                "available_hours": "Horas disponibles",
-                "status": "Estado",
-            }
-        ),
-        use_container_width=True,
+        style_summary(summary_disp),
+        width="stretch",
         hide_index=True,
     )
 
-# ---------------- Exportacion ----------------
+    # ----- Exportacion -----
+    st.divider()
+    st.subheader("Exportar tablero")
+    sheets = {"Resumen_Capacidad": summary, "Detalle_Tareas": tasks_df}
+    excel_bytes = to_excel_bytes(sheets)
 
-st.subheader("Exportar tablero")
-sheets = {"Resumen_Capacidad": summary, "Detalle_Tareas": tasks_df}
-excel_bytes = to_excel_bytes(sheets)
+    c1, c2 = st.columns(2)
+    c1.download_button(
+        "Descargar Excel",
+        data=excel_bytes,
+        file_name=f"capacidad_plataformas_{datetime.now():%Y%m%d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    c2.download_button(
+        "Descargar CSV (resumen)",
+        data=summary.to_csv(index=False).encode("utf-8"),
+        file_name=f"capacidad_resumen_{datetime.now():%Y%m%d}.csv",
+        mime="text/csv",
+    )
 
-c1, c2 = st.columns(2)
-c1.download_button(
-    "Descargar Excel",
-    data=excel_bytes,
-    file_name=f"capacidad_plataformas_{datetime.now():%Y%m%d}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
-c2.download_button(
-    "Descargar CSV (resumen)",
-    data=summary.to_csv(index=False).encode("utf-8"),
-    file_name=f"capacidad_resumen_{datetime.now():%Y%m%d}.csv",
-    mime="text/csv",
+# ---------------- Footer ----------------
+st.divider()
+st.caption(
+    f"Fuente: ClickUp · vista '{view_name}' | Periodo "
+    f"{period_start:%d/%m/%Y}–{period_end:%d/%m/%Y} | "
+    f"Generado {datetime.now():%d/%m/%Y %H:%M}"
 )
