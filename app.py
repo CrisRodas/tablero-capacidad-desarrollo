@@ -463,8 +463,8 @@ else:
 
     st.subheader("Carga de trabajo por desarrollador")
     st.caption(
-        f"Haz click en una barra para ver el detalle de esa persona. "
-        f"Linea roja = capacidad del periodo ({capacity_hours:.0f}h)."
+        f"Linea roja = capacidad del periodo ({capacity_hours:.0f}h). "
+        f"Puedes hacer click en una barra o usar los botones de abajo."
     )
     fig = build_workload_chart(tasks_df, summary, capacity_hours)
     event = st.plotly_chart(
@@ -479,15 +479,21 @@ else:
             st.session_state.selected_dev = clicked_dev
             st.rerun()
 
-    # Alternativa: seleccionar por lista desplegable
-    st.caption("O selecciona una persona:")
-    devs = sorted(summary["developer"].tolist())
-    col_sel, col_btn = st.columns([3, 1])
-    pick = col_sel.selectbox("Desarrollador", devs, label_visibility="collapsed")
-    if col_btn.button("Ver detalle"):
-        st.session_state.selected_dev = pick
-        st.rerun()
+    # Botones por persona: click en el nombre abre su detalle
+    st.markdown("##### Ver detalle por persona (haz click en un nombre)")
+    ordered = summary.sort_values("occupancy_pct", ascending=False)
+    cols = st.columns(3)
+    for i, (_, r) in enumerate(ordered.iterrows()):
+        icono = {
+            "Sobrecargado": "🔴", "A full": "🟠",
+            "Ocupado": "🟡", "Con capacidad": "🟢",
+        }.get(r["status"], "⚪")
+        label = f"{icono} {r['developer']}  ·  {r['occupancy_pct']:.0f}%"
+        if cols[i % 3].button(label, key=f"dev_btn_{r['developer']}", width="stretch"):
+            st.session_state.selected_dev = r["developer"]
+            st.rerun()
 
+    st.divider()
     st.subheader("Detalle de capacidad")
     summary_disp = summary.rename(
         columns={
