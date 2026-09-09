@@ -119,6 +119,113 @@ def build_workload_chart(
     return fig
 
 
+def render_person_view(
+    dev: str, summary: pd.DataFrame, tasks_df: pd.DataFrame, capacity_hours: float
+) -> None:
+    """Vista dedicada de una persona con estimado vs ejecutado y detalle."""
+    row = summary[summary["developer"] == dev]
+    if row.empty:
+        st.warning("No hay datos para esta persona en el periodo.")
+        return
+    row = row.iloc[0]
+
+    st.header(f"👤 {dev}")
+
+    # KPIs principales
+    desviacion = round(row["hours_executed"] - row["hours_scheduled"], 1)
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Estimado (h)", f"{row['hours_scheduled']:.1f}")
+    m2.metric("Ejecutado (h)", f"{row['hours_executed']:.1f}")
+    m3.metric("Desviacion (h)", f"{desviacion:+.1f}",
+              help="Ejecutado - Estimado. Positivo = tardo mas de lo estimado.")
+    m4.metric("% Ocupacion", f"{row['occupancy_pct']:.0f}%")
+    m5.metric("Estado", row["status"])
+
+    dev_tasks = (
+        tasks_df[tasks_df["developer"] == dev]
+        .sort_values("hours_scheduled", ascending=False)
+        .reset_index(drop=True)
+    )
+    if dev_tasks.empty:
+        st.info("Sin tareas en el periodo para esta persona.")
+        return
+
+    color = STATUS_COLORS.get(row["status"], "#3498db")
+
+    # Grafico estimado vs ejecutado por tarea (top 12)
+    st.subheader("Estimado vs Ejecutado por tarea")
+    top = dev_tasks.head(12).iloc[::-1]
+    labels = top["task_name"].str.slice(0, 40)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=labels, x=top["hours_scheduled"], orientation="h",
+        name="Estimado", marker_color="#5dade2",
+    ))
+    fig.add_trace(go.Bar(
+        y=labels, x=top["hours_executed"], orientation="h",
+        name="Ejecutado", marker_color="#e67e22",
+    ))
+    fig.update_layout(
+        barmode="group",
+        height=max(400, len(top) * 45),
+        xaxis_title="Horas",
+        margin=dict(l=10, r=10, t=20, b=10),
+        legend=dict(orientation="h", y=1.05),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Distribucion por lista/proyecto
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("Carga por lista")
+        by_list = (
+            dev_tasks.groupby("list_name")["hours_scheduled"].sum()
+            .sort_values(ascending=False).reset_index()
+        )
+        by_list = by_list[by_list["hours_scheduled"] > 0]
+        if not by_list.empty:
+            fig_pie = px.pie(
+                by_list, names="list_name", values="hours_scheduled", hole=0.4,
+            )
+            fig_pie.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.caption("Sin horas estimadas por lista.")
+
+    with col_b:
+        st.subheader("Resumen")
+        n_tasks = len(dev_tasks)
+        n_activas = int((~dev_tasks["status"].str.lower().isin(
+            ["completado", "cerrado", "closed", "done", "liberado"]
+        )).sum())
+        avance = (row["hours_executed"] / row["hours_scheduled"] * 100
+                  if row["hours_scheduled"] else 0)
+        st.metric("Tareas asignadas", n_tasks)
+        st.metric("Tareas activas", n_activas)
+        st.metric("Avance (ejec/estim)", f"{avance:.0f}%")
+        libre = capacity_hours - row["hours_scheduled"]
+        st.metric("Horas libres en el periodo", f"{libre:.1f}")
+
+    # Tabla de tareas con desviacion
+    st.subheader("Detalle de tareas")
+    detalle = dev_tasks.copy()
+    detalle["desviacion"] = (detalle["hours_executed"] - detalle["hours_scheduled"]).round(1)
+    st.dataframe(
+        detalle[
+            ["task_name", "list_name", "hours_scheduled", "hours_executed", "desviacion", "status"]
+        ].rename(columns={
+            "task_name": "Tarea",
+            "list_name": "Lista",
+            "hours_scheduled": "Estimado (h)",
+            "hours_executed": "Ejecutado (h)",
+            "desviacion": "Desviacion (h)",
+            "status": "Estado",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 # ---------------- Sidebar / configuracion ----------------
 
 st.sidebar.title("Configuracion")
@@ -191,28 +298,58 @@ if summary.empty:
     st.warning("No hay tareas con horas en la vista seleccionada.")
     st.stop()
 
-# ---------------- KPIs ----------------
-
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Desarrolladores", len(summary))
-k2.metric("Horas programadas", round(summary["hours_scheduled"].sum(), 1))
-k3.metric("Horas ejecutadas", round(summary["hours_executed"].sum(), 1))
-con_cap = (summary["status"] == "Con capacidad").sum()
-k4.metric("Con capacidad libre", int(con_cap))
-
-# ---------------- Pestañas ----------------
-
 capacity_hours = capacity * num_weeks
-tab_general, tab_persona = st.tabs(["Vista general", "Por persona"])
 
-with tab_general:
+# Estado de navegacion (persona seleccionada)
+if "selected_dev" not in st.session_state:
+    st.session_state.selected_dev = None
+
+# ================= VISTA DE PERSONA =================
+if st.session_state.selected_dev:
+    if st.button("← Volver a la vista general"):
+        st.session_state.selected_dev = None
+        st.rerun()
+
+    render_person_view(
+        st.session_state.selected_dev, summary, tasks_df, capacity_hours
+    )
+
+# ================= VISTA GENERAL =================
+else:
+    # KPIs
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Desarrolladores", len(summary))
+    k2.metric("Horas programadas", round(summary["hours_scheduled"].sum(), 1))
+    k3.metric("Horas ejecutadas", round(summary["hours_executed"].sum(), 1))
+    con_cap = (summary["status"] == "Con capacidad").sum()
+    k4.metric("Con capacidad libre", int(con_cap))
+
     st.subheader("Carga de trabajo por desarrollador")
     st.caption(
-        f"Cada barra es una persona; los segmentos son sus tareas. "
+        f"Haz click en una barra para ver el detalle de esa persona. "
         f"Linea roja = capacidad del periodo ({capacity_hours:.0f}h)."
     )
     fig = build_workload_chart(tasks_df, summary, capacity_hours)
-    st.plotly_chart(fig, use_container_width=True)
+    event = st.plotly_chart(
+        fig, use_container_width=True, on_select="rerun", key="workload_chart"
+    )
+
+    # Capturar click en una barra -> abrir vista de esa persona
+    points = (event.get("selection", {}) or {}).get("points", []) if event else []
+    if points:
+        clicked_dev = points[0].get("y")
+        if clicked_dev:
+            st.session_state.selected_dev = clicked_dev
+            st.rerun()
+
+    # Alternativa: seleccionar por lista desplegable
+    st.caption("O selecciona una persona:")
+    devs = sorted(summary["developer"].tolist())
+    col_sel, col_btn = st.columns([3, 1])
+    pick = col_sel.selectbox("Desarrollador", devs, label_visibility="collapsed")
+    if col_btn.button("Ver detalle"):
+        st.session_state.selected_dev = pick
+        st.rerun()
 
     st.subheader("Detalle de capacidad")
     st.dataframe(
@@ -230,63 +367,6 @@ with tab_general:
         use_container_width=True,
         hide_index=True,
     )
-
-with tab_persona:
-    devs = sorted(summary["developer"].tolist())
-    sel_dev = st.selectbox("Selecciona un desarrollador", devs)
-
-    row = summary[summary["developer"] == sel_dev].iloc[0]
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Horas programadas", f"{row['hours_scheduled']:.1f}")
-    m2.metric("Horas ejecutadas", f"{row['hours_executed']:.1f}")
-    m3.metric("% Ocupacion", f"{row['occupancy_pct']:.0f}%")
-    m4.metric("Estado", row["status"])
-
-    dev_tasks = (
-        tasks_df[tasks_df["developer"] == sel_dev]
-        .sort_values("hours_scheduled", ascending=False)
-        .reset_index(drop=True)
-    )
-
-    if dev_tasks.empty:
-        st.info("Sin tareas en el periodo para esta persona.")
-    else:
-        top = dev_tasks.head(15).iloc[::-1]  # mayor arriba en barra horizontal
-        color = STATUS_COLORS.get(row["status"], "#3498db")
-        fig_dev = go.Figure(
-            go.Bar(
-                x=top["hours_scheduled"],
-                y=top["task_name"].str.slice(0, 45),
-                orientation="h",
-                marker_color=color,
-                text=top["hours_scheduled"].round(1),
-                textposition="outside",
-            )
-        )
-        fig_dev.update_layout(
-            title=f"Tareas de {sel_dev} (mayor carga arriba)",
-            xaxis_title="Horas programadas",
-            height=max(350, len(top) * 32),
-            margin=dict(l=10, r=10, t=50, b=10),
-        )
-        st.plotly_chart(fig_dev, use_container_width=True)
-
-        st.markdown("**Tareas asignadas**")
-        st.dataframe(
-            dev_tasks[
-                ["task_name", "list_name", "hours_scheduled", "hours_executed", "status"]
-            ].rename(
-                columns={
-                    "task_name": "Tarea",
-                    "list_name": "Lista",
-                    "hours_scheduled": "Estimado (h)",
-                    "hours_executed": "Ejecutado (h)",
-                    "status": "Estado",
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
 
 # ---------------- Exportacion ----------------
 
