@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
+from auth import require_login
 from clickup_client import ClickUpClient, ClickUpError
 from data_processing import (
     add_parent_names,
@@ -27,6 +28,9 @@ from data_processing import (
 load_dotenv()
 
 st.set_page_config(page_title="Capacidad Plataformas Alternas", layout="wide")
+
+# Bloquea el acceso hasta autenticar (fail-closed)
+require_login()
 
 # Espacio Plataformas Alternas y vista de Workload
 DEFAULT_SPACE_ID = "90170456028"

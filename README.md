@@ -71,6 +71,36 @@ Replica el comportamiento del Workload de ClickUp:
 - **Capacidad por persona**: ajustable en el sidebar para part-time.
 - **Formato condicional** en la tabla de ocupacion.
 
+## Seguridad y despliegue interno
+
+El tablero muestra datos sensibles, por lo que **requiere login** y NO debe
+exponerse en internet publico. Recomendado: correrlo en un servidor/VM
+interno accesible solo por la red corporativa o VPN.
+
+### Contrasena de acceso
+
+1. Genera el hash: `python generar_password.py`
+2. Ponlo en `.env` como `APP_PASSWORD_SHA256=<hash>`
+
+Sin contrasena configurada, la app se bloquea (fail-closed).
+
+### Despliegue con Docker
+
+```bash
+# Con el .env ya configurado (token, team, space, password)
+docker compose up -d --build
+```
+
+La app queda en el puerto 8501 del host. Para exponerla solo en la maquina
+local, cambia el mapeo de puertos en docker-compose.yml a
+`127.0.0.1:8501:8501`. Para el equipo, publicala tras la red interna/VPN.
+
+### Reglas de seguridad
+
+- El `.env` NUNCA se sube al repo (esta en .gitignore y .dockerignore).
+- El token de ClickUp da acceso a todo el workspace: tratalo como secreto.
+- Si un token se expone, revocalo y genera uno nuevo en ClickUp.
+
 ## Notas
 
 - La lista de personas del equipo esta en `TEAM_ASSIGNEE_IDS` en `app.py`,

@@ -1,0 +1,16 @@
+services:
+  tablero:
+    build: .
+    container_name: tablero-capacidad
+    ports:
+      # Solo accesible desde la red interna donde corra el host.
+      # Para exponer solo en la maquina local usa "127.0.0.1:8501:8501".
+      - "8501:8501"
+    environment:
+      # Estos valores se toman del archivo .env (no versionado)
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN}
+      - CLICKUP_TEAM_ID=${CLICKUP_TEAM_ID}
+      - CLICKUP_SPACE_ID=${CLICKUP_SPACE_ID}
+      - CAPACITY_HOURS_PER_WEEK=${CAPACITY_HOURS_PER_WEEK:-40}
+      - APP_PASSWORD_SHA256=${APP_PASSWORD_SHA256}
+    restart: unless-stopped
