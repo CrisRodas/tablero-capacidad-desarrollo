@@ -110,6 +110,7 @@ def tasks_to_df(
             spent_hours = round(spent_hours * frac, 2)
 
         status = (t.get("status", {}) or {}).get("status", "")
+        status_type_val = (t.get("status", {}) or {}).get("type", "")
         due_dt = _ms_to_date(t.get("due_date"))
         list_name = (t.get("list", {}) or {}).get("name", "")
 
@@ -135,6 +136,7 @@ def tasks_to_df(
                     "hours_scheduled": share_est,
                     "hours_executed": share_spent,
                     "status": status,
+                    "status_type": status_type_val,
                     "due_date": due_dt,
                 }
             )
@@ -142,24 +144,31 @@ def tasks_to_df(
     return pd.DataFrame(rows)
 
 
+def is_active_status(status_type: str) -> bool:
+    """True si el estado NO esta terminado (no es done ni closed)."""
+    return status_type not in ("done", "closed")
+
+
 def build_capacity_summary(
     tasks_df: pd.DataFrame,
     capacity_hours_per_week: float,
-    num_weeks: int = 1,
+    num_weeks: float = 1,
+    capacity_overrides: dict[str, float] | None = None,
 ) -> pd.DataFrame:
-    """Agrupa por desarrollador y calcula ocupacion vs capacidad."""
+    """Agrupa por desarrollador y calcula ocupacion vs capacidad.
+
+    capacity_overrides: {nombre_dev: horas_por_semana} para capacidades
+    individuales (ej. part-time). El resto usa el default global.
+    """
+    cols = [
+        "developer", "hours_scheduled", "hours_executed",
+        "capacity_hours", "occupancy_pct", "available_hours", "status",
+    ]
     if tasks_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "developer",
-                "hours_scheduled",
-                "hours_executed",
-                "capacity_hours",
-                "occupancy_pct",
-                "available_hours",
-                "status",
-            ]
-        )
+        return pd.DataFrame(columns=cols)
+
+    overrides = capacity_overrides or {}
+    weeks = max(num_weeks, 0.01)
 
     grouped = (
         tasks_df.groupby("developer")[["hours_scheduled", "hours_executed"]]
@@ -168,13 +177,14 @@ def build_capacity_summary(
         .reset_index()
     )
 
-    total_capacity = capacity_hours_per_week * max(num_weeks, 1)
-    grouped["capacity_hours"] = total_capacity
+    grouped["capacity_hours"] = grouped["developer"].apply(
+        lambda d: round(overrides.get(d, capacity_hours_per_week) * weeks, 2)
+    )
     grouped["occupancy_pct"] = (
-        grouped["hours_scheduled"] / total_capacity * 100
+        grouped["hours_scheduled"] / grouped["capacity_hours"] * 100
     ).round(1)
     grouped["available_hours"] = (
-        total_capacity - grouped["hours_scheduled"]
+        grouped["capacity_hours"] - grouped["hours_scheduled"]
     ).round(2)
     grouped["status"] = grouped["occupancy_pct"].apply(_capacity_status)
     return grouped.sort_values("occupancy_pct", ascending=False).reset_index(drop=True)

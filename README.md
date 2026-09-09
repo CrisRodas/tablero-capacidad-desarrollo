@@ -47,10 +47,26 @@ Replica el comportamiento del Workload de ClickUp:
 - Estado: Con capacidad (<50%), Ocupado (50-85%), A full (85-100%),
   Sobrecargado (>=100%).
 
+## Funciones del tablero
+
+- **Resumen ejecutivo**: ocupacion promedio, horas libres del equipo,
+  personas con capacidad y precision de estimacion (ejecutado vs estimado).
+- **Alertas**: lista de personas sobrecargadas y de quienes pueden recibir
+  mas horas.
+- **Grafico tipo Workload**: barras por persona coloreadas por estado, con
+  linea de capacidad. Click en una barra abre la vista de esa persona.
+- **Vista por persona**: estimado vs ejecutado por tarea, desviacion,
+  distribucion por lista, tareas activas y exportacion individual a Excel.
+- **Rangos rapidos**: esta semana / mes / trimestre / personalizado.
+- **Capacidad por persona**: ajustable en el sidebar para part-time.
+- **Formato condicional** en la tabla de ocupacion.
+
 ## Notas
 
 - La lista de personas del equipo esta en `TEAM_ASSIGNEE_IDS` en `app.py`,
   tomada de la configuracion de la vista. Si cambia el equipo, actualizala.
+- Las tareas activas se determinan por el tipo de estado de ClickUp
+  (open/custom = activa; done/closed = terminada).
 - Tareas sin fechas se cuentan completas en el periodo (no se pueden
   distribuir sin rango).
 - La API de ClickUp tiene rate limits; el cliente reintenta automaticamente.

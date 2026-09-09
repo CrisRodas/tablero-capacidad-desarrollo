@@ -17,7 +17,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from clickup_client import ClickUpClient, ClickUpError
-from data_processing import build_capacity_summary, tasks_to_df
+from data_processing import build_capacity_summary, is_active_status, tasks_to_df
 
 load_dotenv()
 
@@ -215,34 +215,50 @@ def render_person_view(
     with col_b:
         st.subheader("Resumen")
         n_tasks = len(dev_tasks)
-        n_activas = int((~dev_tasks["status"].str.lower().isin(
-            ["completado", "cerrado", "closed", "done", "liberado"]
-        )).sum())
+        if "status_type" in dev_tasks.columns:
+            n_activas = int(dev_tasks["status_type"].apply(is_active_status).sum())
+        else:
+            n_activas = n_tasks
         avance = (row["hours_executed"] / row["hours_scheduled"] * 100
                   if row["hours_scheduled"] else 0)
         st.metric("Tareas asignadas", n_tasks)
         st.metric("Tareas activas", n_activas)
         st.metric("Avance (ejec/estim)", f"{avance:.0f}%")
-        libre = capacity_hours - row["hours_scheduled"]
+        libre = row["capacity_hours"] - row["hours_scheduled"]
         st.metric("Horas libres en el periodo", f"{libre:.1f}")
 
     # Tabla de tareas con desviacion
     st.subheader("Detalle de tareas")
     detalle = dev_tasks.copy()
     detalle["desviacion"] = (detalle["hours_executed"] - detalle["hours_scheduled"]).round(1)
-    st.dataframe(
-        detalle[
-            ["task_name", "list_name", "hours_scheduled", "hours_executed", "desviacion", "status"]
-        ].rename(columns={
-            "task_name": "Tarea",
-            "list_name": "Lista",
-            "hours_scheduled": "Estimado (h)",
-            "hours_executed": "Ejecutado (h)",
-            "desviacion": "Desviacion (h)",
-            "status": "Estado",
-        }),
-        width="stretch",
-        hide_index=True,
+    detalle_disp = detalle[
+        ["task_name", "list_name", "hours_scheduled", "hours_executed", "desviacion", "status"]
+    ].rename(columns={
+        "task_name": "Tarea",
+        "list_name": "Lista",
+        "hours_scheduled": "Estimado (h)",
+        "hours_executed": "Ejecutado (h)",
+        "desviacion": "Desviacion (h)",
+        "status": "Estado",
+    })
+    st.dataframe(detalle_disp, width="stretch", hide_index=True)
+
+    # Exportacion individual de la persona
+    resumen_persona = pd.DataFrame([{
+        "Desarrollador": dev,
+        "Estimado (h)": row["hours_scheduled"],
+        "Ejecutado (h)": row["hours_executed"],
+        "Capacidad (h)": row["capacity_hours"],
+        "% Ocupacion": row["occupancy_pct"],
+        "Estado": row["status"],
+    }])
+    xls = to_excel_bytes({"Resumen": resumen_persona, "Tareas": detalle_disp})
+    st.download_button(
+        f"Descargar Excel de {dev}",
+        data=xls,
+        file_name=f"capacidad_{dev.replace(' ', '_')}_{datetime.now():%Y%m%d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="export_persona",
     )
 
 
@@ -337,14 +353,45 @@ num_workdays = sum(
     1 for i in range((period_end - period_start).days + 1)
     if (period_start + timedelta(days=i)).weekday() < 5
 )
-capacity_period = capacity * (num_workdays / 5)  # 5 dias laborales = 1 semana
 num_weeks = max(num_workdays / 5, 0.2)
 
-summary = build_capacity_summary(tasks_df, capacity, num_weeks)
+# Primer calculo con capacidad default para obtener la lista de personas
+base_summary = build_capacity_summary(tasks_df, capacity, num_weeks)
 
-if summary.empty:
+if base_summary.empty:
     st.warning("No hay tareas con horas en la vista seleccionada.")
     st.stop()
+
+# ----- Capacidad individual por persona (part-time, etc.) -----
+if "cap_overrides" not in st.session_state:
+    st.session_state.cap_overrides = {}
+
+with st.sidebar.expander("Capacidad por persona (opcional)"):
+    st.caption("Ajusta las horas/semana de quien no trabaje a tiempo completo.")
+    editor_df = pd.DataFrame({
+        "Desarrollador": base_summary["developer"],
+        "Horas/semana": [
+            st.session_state.cap_overrides.get(d, capacity)
+            for d in base_summary["developer"]
+        ],
+    })
+    edited = st.data_editor(
+        editor_df, hide_index=True, width="stretch", key="cap_editor",
+        column_config={
+            "Desarrollador": st.column_config.TextColumn(disabled=True),
+            "Horas/semana": st.column_config.NumberColumn(min_value=0, step=1),
+        },
+    )
+    # Guardar solo los que difieren del default
+    st.session_state.cap_overrides = {
+        r["Desarrollador"]: r["Horas/semana"]
+        for _, r in edited.iterrows()
+        if r["Horas/semana"] != capacity
+    }
+
+summary = build_capacity_summary(
+    tasks_df, capacity, num_weeks, st.session_state.cap_overrides
+)
 
 capacity_hours = capacity * num_weeks
 
@@ -366,7 +413,7 @@ if st.session_state.selected_dev:
 else:
     # ----- Resumen ejecutivo -----
     n_devs = len(summary)
-    total_cap = capacity_hours * n_devs
+    total_cap = summary["capacity_hours"].sum()
     total_prog = summary["hours_scheduled"].sum()
     horas_libres = round(max(total_cap - total_prog, 0), 1)
     ocup_prom = round(total_prog / total_cap * 100, 1) if total_cap else 0
