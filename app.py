@@ -24,10 +24,17 @@ from data_processing import (
     is_active_status,
     tasks_to_df,
 )
+from ui import header, inject_css, kpi_card, kpi_row, status_badge
 
 load_dotenv()
 
-st.set_page_config(page_title="Capacidad Plataformas Alternas", layout="wide")
+st.set_page_config(
+    page_title="Capacidad Plataformas Alternas",
+    page_icon="📊",
+    layout="wide",
+)
+
+inject_css()
 
 # Bloquea el acceso hasta autenticar (fail-closed)
 require_login()
@@ -49,10 +56,10 @@ TEAM_ASSIGNEE_IDS = {
 }
 
 STATUS_COLORS = {
-    "Con capacidad": "#2ecc71",
-    "Ocupado": "#f1c40f",
-    "A full": "#e67e22",
-    "Sobrecargado": "#e74c3c",
+    "Con capacidad": "#10b981",
+    "Ocupado": "#f59e0b",
+    "A full": "#f97316",
+    "Sobrecargado": "#ef4444",
 }
 
 
@@ -145,7 +152,11 @@ def build_workload_chart(
         margin=dict(l=10, r=10, t=20, b=10),
         bargap=0.3,
         legend_title="Estado",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="sans-serif", color="#1f2937"),
     )
+    fig.update_xaxes(gridcolor="#eef0f6")
     return fig
 
 
@@ -159,17 +170,22 @@ def render_person_view(
         return
     row = row.iloc[0]
 
-    st.header(f"👤 {dev}")
+    st.markdown(f"### 👤 {dev}")
+    st.markdown(status_badge(row["status"]), unsafe_allow_html=True)
+    st.write("")
 
-    # KPIs principales
+    # KPIs principales en tarjetas
     desviacion = round(row["hours_executed"] - row["hours_scheduled"], 1)
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Estimado (h)", f"{row['hours_scheduled']:.1f}")
-    m2.metric("Ejecutado (h)", f"{row['hours_executed']:.1f}")
-    m3.metric("Desviacion (h)", f"{desviacion:+.1f}",
-              help="Ejecutado - Estimado. Positivo = tardo mas de lo estimado.")
-    m4.metric("% Ocupacion", f"{row['occupancy_pct']:.0f}%")
-    m5.metric("Estado", row["status"])
+    occ_accent = ("#dc2626" if row["occupancy_pct"] >= 100 else
+                  "#c2410c" if row["occupancy_pct"] >= 85 else
+                  "#b45309" if row["occupancy_pct"] >= 50 else "#059669")
+    kpi_row([
+        kpi_card("Estimado", f"{row['hours_scheduled']:.1f}h", "horas programadas", "#4f46e5"),
+        kpi_card("Ejecutado", f"{row['hours_executed']:.1f}h", "horas registradas", "#0891b2"),
+        kpi_card("Desviacion", f"{desviacion:+.1f}h", "ejecutado - estimado", "#7c3aed"),
+        kpi_card("Ocupacion", f"{row['occupancy_pct']:.0f}%", "de su capacidad", occ_accent),
+    ])
+    st.write("")
 
     dev_tasks = (
         tasks_df[tasks_df["developer"] == dev]
@@ -331,9 +347,10 @@ only_team = st.sidebar.checkbox(
 if st.sidebar.button("Actualizar datos"):
     st.cache_data.clear()
 
-th1, th2 = st.columns([4, 1])
-th1.title("Tablero de Capacidad - Plataformas Alternas")
-th2.caption(f"Datos al\n{datetime.now():%d/%m/%Y %H:%M}")
+header(
+    "Tablero de Capacidad · Plataformas Alternas",
+    f"Gestion de capacidad del equipo de desarrollo · Datos al {datetime.now():%d/%m/%Y %H:%M}",
+)
 
 if not token or not team_id or not space_id:
     st.info("Configura API Token, Team ID y Space ID en el .env para comenzar.")
@@ -445,15 +462,22 @@ else:
     )
 
     st.markdown("#### Resumen ejecutivo")
-    e1, e2, e3, e4, e5 = st.columns(5)
-    e1.metric("Equipo", n_devs)
-    e2.metric("Ocupacion promedio", f"{ocup_prom:.0f}%")
-    e3.metric("Horas libres del equipo", f"{horas_libres:.0f}",
-              help="Capacidad total no comprometida en el periodo.")
-    e4.metric("Personas con capacidad",
-              int((summary["status"] == "Con capacidad").sum()))
-    e5.metric("Desviacion estimacion", f"{desv_pct:+.0f}%",
-              help="Ejecutado vs estimado del equipo. + = tarda mas de lo estimado.")
+    ocup_accent = ("#dc2626" if ocup_prom >= 100 else
+                   "#c2410c" if ocup_prom >= 85 else
+                   "#b45309" if ocup_prom >= 50 else "#059669")
+    kpi_row([
+        kpi_card("Equipo", str(n_devs), "desarrolladores", "#4f46e5"),
+        kpi_card("Ocupacion promedio", f"{ocup_prom:.0f}%",
+                 "carga vs capacidad", ocup_accent),
+        kpi_card("Horas libres", f"{horas_libres:.0f}",
+                 "disponibles en el periodo", "#0891b2"),
+        kpi_card("Con capacidad",
+                 str(int((summary["status"] == "Con capacidad").sum())),
+                 "personas con holgura", "#059669"),
+        kpi_card("Desviacion estimacion", f"{desv_pct:+.0f}%",
+                 "ejecutado vs estimado", "#7c3aed"),
+    ])
+    st.write("")
 
     # ----- Panel de alertas / semaforo -----
     sobrecargados = summary[summary["status"] == "Sobrecargado"]
