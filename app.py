@@ -66,17 +66,11 @@ def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
 # ---------------- Sidebar / configuracion ----------------
 
 st.sidebar.title("Configuracion")
-token = st.sidebar.text_input(
-    "ClickUp API Token",
-    value=os.getenv("CLICKUP_API_TOKEN", ""),
-    type="password",
-)
-team_id = st.sidebar.text_input("Team ID", value=os.getenv("CLICKUP_TEAM_ID", ""))
-view_id = st.sidebar.text_input(
-    "View ID (vista de Carga de trabajo)",
-    value=os.getenv("CLICKUP_VIEW_ID", DEFAULT_VIEW_ID),
-    help="ID de la vista de Workload en ClickUp de donde se leen las tareas.",
-)
+
+# Credenciales y vista tomadas del .env (no se muestran en la interfaz)
+token = os.getenv("CLICKUP_API_TOKEN", "")
+team_id = os.getenv("CLICKUP_TEAM_ID", "")
+view_id = os.getenv("CLICKUP_VIEW_ID", DEFAULT_VIEW_ID)
 capacity = st.sidebar.number_input(
     "Capacidad (horas/semana por dev)",
     min_value=1.0,
