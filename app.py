@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -61,6 +62,61 @@ def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
         for name, df in sheets.items():
             df.to_excel(writer, sheet_name=name[:31], index=False)
     return buffer.getvalue()
+
+
+def build_workload_chart(
+    tasks_df: pd.DataFrame, summary: pd.DataFrame, capacity_hours: float
+) -> go.Figure:
+    """Grafico tipo Workload de ClickUp: barras por persona, segmentos por tarea.
+
+    El color de cada barra depende del estado de carga de la persona; los
+    segmentos son sus tareas individuales. Linea vertical = capacidad.
+    """
+    order = summary.sort_values("hours_scheduled")["developer"].tolist()
+    status_by_dev = dict(zip(summary["developer"], summary["status"]))
+
+    # Ordenar tareas por dev y por horas para apilarlas de mayor a menor
+    df = tasks_df.copy()
+    df["_status"] = df["developer"].map(status_by_dev)
+    df = df.sort_values(["developer", "hours_scheduled"], ascending=[True, False])
+
+    # Un trace por estado (eficiente) coloreado segun la carga de la persona
+    fig = go.Figure()
+    for status, color in STATUS_COLORS.items():
+        sub = df[df["_status"] == status]
+        if sub.empty:
+            continue
+        fig.add_trace(
+            go.Bar(
+                x=sub["hours_scheduled"],
+                y=sub["developer"],
+                orientation="h",
+                marker_color=color,
+                marker_line_color="white",
+                marker_line_width=0.5,
+                name=status,
+                customdata=sub[["task_name", "hours_scheduled"]].values,
+                hovertemplate="%{customdata[0]}<br>%{customdata[1]:.1f}h<extra></extra>",
+            )
+        )
+
+    fig.add_vline(
+        x=capacity_hours,
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"Capacidad {capacity_hours:.0f}h",
+        annotation_position="top",
+    )
+    fig.update_layout(
+        barmode="stack",
+        height=max(400, len(order) * 45),
+        xaxis_title="Horas programadas en el periodo",
+        yaxis=dict(categoryorder="array", categoryarray=order),
+        margin=dict(l=10, r=10, t=20, b=10),
+        bargap=0.3,
+        legend_title="Estado",
+    )
+    return fig
 
 
 # ---------------- Sidebar / configuracion ----------------
@@ -144,64 +200,93 @@ k3.metric("Horas ejecutadas", round(summary["hours_executed"].sum(), 1))
 con_cap = (summary["status"] == "Con capacidad").sum()
 k4.metric("Con capacidad libre", int(con_cap))
 
-# ---------------- Grafico de ocupacion ----------------
+# ---------------- Pestañas ----------------
 
-st.subheader("Ocupacion por desarrollador")
-fig = px.bar(
-    summary,
-    x="developer",
-    y="occupancy_pct",
-    color="status",
-    color_discrete_map=STATUS_COLORS,
-    labels={"developer": "Desarrollador", "occupancy_pct": "% Ocupacion"},
-    text="occupancy_pct",
-)
-fig.add_hline(y=100, line_dash="dash", line_color="red")
-fig.update_traces(texttemplate="%{text}%", textposition="outside")
-fig.update_layout(xaxis_tickangle=-45)
-st.plotly_chart(fig, use_container_width=True)
+capacity_hours = capacity * num_weeks
+tab_general, tab_persona = st.tabs(["Vista general", "Por persona"])
 
-# ---------------- Tabla resumen ----------------
+with tab_general:
+    st.subheader("Carga de trabajo por desarrollador")
+    st.caption(
+        f"Cada barra es una persona; los segmentos son sus tareas. "
+        f"Linea roja = capacidad del periodo ({capacity_hours:.0f}h)."
+    )
+    fig = build_workload_chart(tasks_df, summary, capacity_hours)
+    st.plotly_chart(fig, use_container_width=True)
 
-st.subheader("Detalle de capacidad")
-st.dataframe(
-    summary.rename(
-        columns={
-            "developer": "Desarrollador",
-            "hours_scheduled": "Horas programadas",
-            "hours_executed": "Horas ejecutadas",
-            "capacity_hours": "Capacidad (h)",
-            "occupancy_pct": "% Ocupacion",
-            "available_hours": "Horas disponibles",
-            "status": "Estado",
-        }
-    ),
-    use_container_width=True,
-    hide_index=True,
-)
+    st.subheader("Detalle de capacidad")
+    st.dataframe(
+        summary.rename(
+            columns={
+                "developer": "Desarrollador",
+                "hours_scheduled": "Horas programadas",
+                "hours_executed": "Horas ejecutadas",
+                "capacity_hours": "Capacidad (h)",
+                "occupancy_pct": "% Ocupacion",
+                "available_hours": "Horas disponibles",
+                "status": "Estado",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
 
-# ---------------- Detalle de tareas por desarrollador ----------------
+with tab_persona:
+    devs = sorted(summary["developer"].tolist())
+    sel_dev = st.selectbox("Selecciona un desarrollador", devs)
 
-st.subheader("Tareas por desarrollador")
-devs = ["(Todos)"] + sorted(tasks_df["developer"].unique().tolist())
-sel_dev = st.selectbox("Filtrar por desarrollador", devs)
-detalle = tasks_df if sel_dev == "(Todos)" else tasks_df[tasks_df["developer"] == sel_dev]
-st.dataframe(
-    detalle[
-        ["developer", "task_name", "list_name", "hours_scheduled", "hours_executed", "status"]
-    ].rename(
-        columns={
-            "developer": "Desarrollador",
-            "task_name": "Tarea",
-            "list_name": "Lista",
-            "hours_scheduled": "Estimado (h)",
-            "hours_executed": "Ejecutado (h)",
-            "status": "Estado",
-        }
-    ),
-    use_container_width=True,
-    hide_index=True,
-)
+    row = summary[summary["developer"] == sel_dev].iloc[0]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Horas programadas", f"{row['hours_scheduled']:.1f}")
+    m2.metric("Horas ejecutadas", f"{row['hours_executed']:.1f}")
+    m3.metric("% Ocupacion", f"{row['occupancy_pct']:.0f}%")
+    m4.metric("Estado", row["status"])
+
+    dev_tasks = (
+        tasks_df[tasks_df["developer"] == sel_dev]
+        .sort_values("hours_scheduled", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    if dev_tasks.empty:
+        st.info("Sin tareas en el periodo para esta persona.")
+    else:
+        top = dev_tasks.head(15).iloc[::-1]  # mayor arriba en barra horizontal
+        color = STATUS_COLORS.get(row["status"], "#3498db")
+        fig_dev = go.Figure(
+            go.Bar(
+                x=top["hours_scheduled"],
+                y=top["task_name"].str.slice(0, 45),
+                orientation="h",
+                marker_color=color,
+                text=top["hours_scheduled"].round(1),
+                textposition="outside",
+            )
+        )
+        fig_dev.update_layout(
+            title=f"Tareas de {sel_dev} (mayor carga arriba)",
+            xaxis_title="Horas programadas",
+            height=max(350, len(top) * 32),
+            margin=dict(l=10, r=10, t=50, b=10),
+        )
+        st.plotly_chart(fig_dev, use_container_width=True)
+
+        st.markdown("**Tareas asignadas**")
+        st.dataframe(
+            dev_tasks[
+                ["task_name", "list_name", "hours_scheduled", "hours_executed", "status"]
+            ].rename(
+                columns={
+                    "task_name": "Tarea",
+                    "list_name": "Lista",
+                    "hours_scheduled": "Estimado (h)",
+                    "hours_executed": "Ejecutado (h)",
+                    "status": "Estado",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 # ---------------- Exportacion ----------------
 
