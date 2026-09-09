@@ -108,6 +108,26 @@ class ClickUpClient:
                 break
             page += 1
 
+    def iter_view_tasks(self, view_id: str) -> Iterator[dict[str, Any]]:
+        """Itera todas las tareas de una vista de ClickUp (workload, list, etc).
+
+        Respeta los filtros y agrupacion configurados en la vista.
+        """
+        page = 0
+        while True:
+            data = self._get(f"/view/{view_id}/task", params={"page": page})
+            tasks = data.get("tasks", [])
+            if not tasks:
+                break
+            yield from tasks
+            if data.get("last_page"):
+                break
+            page += 1
+
+    def get_view(self, view_id: str) -> dict[str, Any]:
+        """Devuelve la metadata de una vista."""
+        return self._get(f"/view/{view_id}").get("view", {})
+
     def get_spaces(self) -> list[dict[str, Any]]:
         data = self._get(f"/team/{self.team_id}/space", params={"archived": "false"})
         return data.get("spaces", [])

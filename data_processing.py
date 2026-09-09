@@ -1,13 +1,14 @@
 """Transformacion de datos de ClickUp a metricas de capacidad.
 
-En este workspace las horas viven en las tareas/subtareas nativas:
-- time_estimate  -> duracion estimada (horas programadas)
-- time_spent     -> tiempo registrado (horas ejecutadas)
+Opcion C: replica la logica de la vista de Workload de ClickUp.
+Las horas de cada tarea (time_estimate / time_spent) se distribuyen entre
+los dias laborales de su rango start_date -> due_date, y se cuenta solo la
+porcion que cae dentro del periodo seleccionado.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 
@@ -21,39 +22,104 @@ def _ms_to_hours(value) -> float:
         return 0.0
 
 
-def tasks_to_df(tasks: list[dict]) -> pd.DataFrame:
-    """Convierte tareas/subtareas en un DataFrame por desarrollador.
+def _ms_to_date(value) -> date | None:
+    try:
+        return datetime.fromtimestamp(int(value) / 1000).date()
+    except (TypeError, ValueError):
+        return None
 
-    Cada fila = una tarea asignada a un desarrollador, con sus horas
-    estimadas (programadas) y ejecutadas (time_spent). Si una tarea tiene
-    varios asignados, las horas se reparten en partes iguales.
+
+def _workdays(start: date, end: date) -> list[date]:
+    """Lista de dias laborales (lun-vie) entre start y end, inclusive."""
+    if start > end:
+        start, end = end, start
+    days = []
+    d = start
+    while d <= end:
+        if d.weekday() < 5:  # 0=lunes ... 4=viernes
+            days.append(d)
+        d += timedelta(days=1)
+    return days
+
+
+def _overlap_fraction(
+    task_start: date | None,
+    task_end: date | None,
+    period_start: date,
+    period_end: date,
+) -> float:
+    """Fraccion de las horas de la tarea que cae dentro del periodo.
+
+    Distribuye las horas de forma uniforme entre los dias laborales del
+    rango de la tarea (como hace el Workload de ClickUp) y devuelve la
+    proporcion de esos dias que quedan dentro del periodo seleccionado.
+    """
+    # Si no hay fechas, se asume que toda la carga es del periodo actual
+    if task_start is None and task_end is None:
+        return 1.0
+    if task_start is None:
+        task_start = task_end
+    if task_end is None:
+        task_end = task_start
+
+    task_days = _workdays(task_start, task_end)
+    if not task_days:
+        # rango solo fines de semana: usar el dia tal cual
+        task_days = [task_start]
+
+    in_period = [d for d in task_days if period_start <= d <= period_end]
+    return len(in_period) / len(task_days)
+
+
+def tasks_to_df(
+    tasks: list[dict],
+    period_start: date | None = None,
+    period_end: date | None = None,
+    team_assignee_ids: set[str] | None = None,
+    include_closed_subtasks: bool = False,
+) -> pd.DataFrame:
+    """Convierte tareas de la vista en filas por desarrollador.
+
+    Aplica la distribucion por periodo (Opcion C) si se pasan las fechas.
+    Filtra por los assignees del equipo si se pasa team_assignee_ids.
     """
     rows = []
     for t in tasks:
+        # Excluir subtareas cerradas si aplica (como la vista de ClickUp)
+        status_type = (t.get("status", {}) or {}).get("type", "")
+        is_subtask = t.get("parent") is not None
+        if not include_closed_subtasks and is_subtask and status_type == "closed":
+            continue
+
         estimate_hours = _ms_to_hours(t.get("time_estimate"))
         spent_hours = _ms_to_hours(t.get("time_spent"))
         if estimate_hours == 0 and spent_hours == 0:
-            continue  # tarea sin horas: no aporta a capacidad
+            continue
 
-        assignees = t.get("assignees", []) or []
+        # Distribucion por periodo
+        if period_start and period_end:
+            frac = _overlap_fraction(
+                _ms_to_date(t.get("start_date")),
+                _ms_to_date(t.get("due_date")),
+                period_start,
+                period_end,
+            )
+            if frac == 0:
+                continue
+            estimate_hours = round(estimate_hours * frac, 2)
+            spent_hours = round(spent_hours * frac, 2)
+
         status = (t.get("status", {}) or {}).get("status", "")
-        due = t.get("due_date")
-        due_dt = datetime.fromtimestamp(int(due) / 1000) if due else None
+        due_dt = _ms_to_date(t.get("due_date"))
         list_name = (t.get("list", {}) or {}).get("name", "")
 
+        assignees = t.get("assignees", []) or []
+        if team_assignee_ids:
+            assignees = [
+                a for a in assignees if str(a.get("id")) in team_assignee_ids
+            ]
+
         if not assignees:
-            rows.append(
-                {
-                    "developer": "Sin asignar",
-                    "developer_id": None,
-                    "task_name": t.get("name", ""),
-                    "list_name": list_name,
-                    "hours_scheduled": estimate_hours,
-                    "hours_executed": spent_hours,
-                    "status": status,
-                    "due_date": due_dt,
-                }
-            )
             continue
 
         n = len(assignees)
@@ -73,12 +139,7 @@ def tasks_to_df(tasks: list[dict]) -> pd.DataFrame:
                 }
             )
 
-    df = pd.DataFrame(rows)
-    if not df.empty and df["due_date"].notna().any():
-        df["week"] = df["due_date"].dt.to_period("W").astype(str)
-    else:
-        df["week"] = None
-    return df
+    return pd.DataFrame(rows)
 
 
 def build_capacity_summary(
