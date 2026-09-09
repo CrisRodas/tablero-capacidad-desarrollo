@@ -71,20 +71,42 @@ def _overlap_fraction(
     return len(in_period) / len(task_days)
 
 
+# Estados de ClickUp que se consideran "vigentes" para la capacidad.
+# Se comparan en minusculas.
+ALLOWED_STATUSES = {
+    "abierto",
+    "en análisis",
+    "asignado",
+    "en desarrollo",
+    "en pruebas qa",
+    "en pruebas usuario",
+    "resuelto sin go live",
+    "aprobado-pendiente vo.bo",
+}
+
+
 def tasks_to_df(
     tasks: list[dict],
     period_start: date | None = None,
     period_end: date | None = None,
     team_assignee_ids: set[str] | None = None,
     include_closed_subtasks: bool = False,
+    allowed_statuses: set[str] | None = ALLOWED_STATUSES,
 ) -> pd.DataFrame:
     """Convierte tareas de la vista en filas por desarrollador.
 
     Aplica la distribucion por periodo (Opcion C) si se pasan las fechas.
     Filtra por los assignees del equipo si se pasa team_assignee_ids.
+    Filtra por estados vigentes si se pasa allowed_statuses.
     """
     rows = []
     for t in tasks:
+        # Filtrar por estados permitidos (vigentes)
+        if allowed_statuses is not None:
+            st_name = (t.get("status", {}) or {}).get("status", "").lower()
+            if st_name not in allowed_statuses:
+                continue
+
         # Excluir subtareas cerradas si aplica (como la vista de ClickUp)
         status_type = (t.get("status", {}) or {}).get("type", "")
         is_subtask = t.get("parent") is not None

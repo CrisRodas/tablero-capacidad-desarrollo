@@ -23,8 +23,15 @@ load_dotenv()
 
 st.set_page_config(page_title="Capacidad Plataformas Alternas", layout="wide")
 
-# Vista de Workload por defecto (espacio Plataformas Alternas)
+# Espacio Plataformas Alternas y vista de Workload
+DEFAULT_SPACE_ID = "90170456028"
 DEFAULT_VIEW_ID = "8cev2bd-55197"
+
+# Estados vigentes a analizar (se ignoran resuelto/cancelado/bloqueado/etc.)
+ALLOWED_STATUS_LIST = [
+    "abierto", "en análisis", "asignado", "en desarrollo", "en pruebas qa",
+    "en pruebas usuario", "resuelto sin go live", "aprobado-pendiente vo.bo",
+]
 
 # Personas del equipo segun la configuracion de la vista de Workload
 TEAM_ASSIGNEE_IDS = {
@@ -40,20 +47,14 @@ STATUS_COLORS = {
 }
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def load_raw_view_tasks(token: str, team_id: str, view_id: str):
-    """Trae las tareas crudas de la vista (cacheadas)."""
-    client = ClickUpClient(token, team_id)
-    return list(client.iter_view_tasks(view_id))
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_raw_space_tasks(token: str, team_id: str, space_id: str, statuses: tuple[str, ...]):
+    """Trae las tareas vigentes del espacio en paralelo (cacheadas 30 min).
 
-
-@st.cache_data(ttl=600, show_spinner=False)
-def load_view_name(token: str, team_id: str, view_id: str) -> str:
+    Filtra por estado en la API para descargar solo lo relevante.
+    """
     client = ClickUpClient(token, team_id)
-    try:
-        return client.get_view(view_id).get("name", view_id)
-    except ClickUpError:
-        return view_id
+    return client.get_space_tasks(space_id, statuses=list(statuses), max_workers=8)
 
 
 def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
@@ -269,7 +270,7 @@ st.sidebar.title("Configuracion")
 # Credenciales y vista tomadas del .env (no se muestran en la interfaz)
 token = os.getenv("CLICKUP_API_TOKEN", "")
 team_id = os.getenv("CLICKUP_TEAM_ID", "")
-view_id = os.getenv("CLICKUP_VIEW_ID", DEFAULT_VIEW_ID)
+space_id = os.getenv("CLICKUP_SPACE_ID", DEFAULT_SPACE_ID)
 capacity = st.sidebar.number_input(
     "Capacidad (horas/semana por dev)",
     min_value=1.0,
@@ -322,13 +323,13 @@ th1, th2 = st.columns([4, 1])
 th1.title("Tablero de Capacidad - Plataformas Alternas")
 th2.caption(f"Datos al\n{datetime.now():%d/%m/%Y %H:%M}")
 
-if not token or not team_id or not view_id:
-    st.info("Ingresa API Token, Team ID y View ID en la barra lateral para comenzar.")
+if not token or not team_id or not space_id:
+    st.info("Configura API Token, Team ID y Space ID en el .env para comenzar.")
     st.stop()
 
-view_name = load_view_name(token, team_id, view_id)
+view_name = "Plataformas Alternas"
 st.caption(
-    f"Fuente: vista '{view_name}' | Periodo: {period_start:%d/%m/%Y} - {period_end:%d/%m/%Y} "
+    f"Fuente: espacio '{view_name}' (estados vigentes) | Periodo: {period_start:%d/%m/%Y} - {period_end:%d/%m/%Y} "
     "| Horas distribuidas por rango de fechas (como el Workload de ClickUp)"
 )
 
@@ -336,7 +337,9 @@ st.caption(
 
 try:
     with st.spinner("Cargando datos de ClickUp..."):
-        raw_tasks = load_raw_view_tasks(token, team_id, view_id)
+        raw_tasks = load_raw_space_tasks(
+            token, team_id, space_id, tuple(ALLOWED_STATUS_LIST)
+        )
 except ClickUpError as e:
     st.error(f"No se pudo conectar con ClickUp: {e}")
     st.stop()

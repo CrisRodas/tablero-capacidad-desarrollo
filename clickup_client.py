@@ -7,6 +7,7 @@ tiempo (ejecutado) y las tareas con sus estimados (programado).
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Iterator
 
@@ -84,19 +85,26 @@ class ClickUpClient:
     # ----- Tiempo programado (tareas con estimados) -----
 
     def iter_tasks(
-        self, list_id: str, list_name: str | None = None
+        self,
+        list_id: str,
+        list_name: str | None = None,
+        statuses: list[str] | None = None,
     ) -> Iterator[dict[str, Any]]:
-        """Itera todas las tareas y subtareas de una lista (con paginacion)."""
+        """Itera tareas y subtareas de una lista, filtrando por estado en la API.
+
+        statuses: lista de nombres de estado a incluir. Al filtrar en el
+        origen se descargan muchas menos tareas (mucho mas rapido).
+        """
         page = 0
         while True:
-            data = self._get(
-                f"/list/{list_id}/task",
-                params={
-                    "page": page,
-                    "include_closed": "true",
-                    "subtasks": "true",
-                },
-            )
+            params: dict[str, Any] = {
+                "page": page,
+                "include_closed": "true",
+                "subtasks": "true",
+            }
+            if statuses:
+                params["statuses[]"] = statuses
+            data = self._get(f"/list/{list_id}/task", params=params)
             tasks = data.get("tasks", [])
             if not tasks:
                 break
@@ -108,11 +116,26 @@ class ClickUpClient:
                 break
             page += 1
 
-    def iter_view_tasks(self, view_id: str) -> Iterator[dict[str, Any]]:
-        """Itera todas las tareas de una vista de ClickUp (workload, list, etc).
+    def get_space_tasks(
+        self, space_id: str, statuses: list[str] | None = None, max_workers: int = 8
+    ) -> list[dict[str, Any]]:
+        """Trae todas las tareas de las listas de un espacio, en paralelo.
 
-        Respeta los filtros y agrupacion configurados en la vista.
+        Filtra por estado en la API para bajar solo lo vigente.
         """
+        lists = self.get_lists_in_space(space_id)
+
+        def fetch_list(l: dict) -> list[dict[str, Any]]:
+            return list(self.iter_tasks(l["id"], l["name"], statuses=statuses))
+
+        all_tasks: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for result in pool.map(fetch_list, lists):
+                all_tasks.extend(result)
+        return all_tasks
+
+    def iter_view_tasks(self, view_id: str) -> Iterator[dict[str, Any]]:
+        """Itera todas las tareas de una vista (paginacion secuencial simple)."""
         page = 0
         while True:
             data = self._get(f"/view/{view_id}/task", params={"page": page})
@@ -123,6 +146,37 @@ class ClickUpClient:
             if data.get("last_page"):
                 break
             page += 1
+
+    def get_view_tasks(
+        self, view_id: str, max_workers: int = 8, on_progress=None
+    ) -> list[dict[str, Any]]:
+        """Trae todas las tareas de una vista en paralelo (mucho mas rapido).
+
+        Descarga las paginas en lotes concurrentes hasta encontrar el final.
+        on_progress(n_paginas, n_tareas) se llama para reportar avance.
+        """
+        def fetch_page(p: int) -> list[dict[str, Any]]:
+            data = self._get(f"/view/{view_id}/task", params={"page": p})
+            return data.get("tasks", [])
+
+        all_tasks: list[dict[str, Any]] = []
+        next_page = 0
+        done = False
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            while not done:
+                batch = list(range(next_page, next_page + max_workers))
+                results = list(pool.map(fetch_page, batch))
+                for tasks in results:
+                    all_tasks.extend(tasks)
+                # Solo terminamos cuando una pagina viene realmente vacia
+                # (fin de la paginacion). No cortamos por paginas < 100
+                # porque puede haber paginas intermedias asi.
+                if any(len(r) == 0 for r in results):
+                    done = True
+                next_page += max_workers
+                if on_progress:
+                    on_progress(next_page, len(all_tasks))
+        return all_tasks
 
     def get_view(self, view_id: str) -> dict[str, Any]:
         """Devuelve la metadata de una vista."""

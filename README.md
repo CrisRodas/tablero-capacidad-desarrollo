@@ -33,6 +33,16 @@ Abre en http://localhost:8501. En la barra lateral:
 3. Periodo a analizar (por defecto, la semana actual).
 4. "Solo equipo de la vista" para filtrar a las personas configuradas.
 
+## Fuente de datos y estados
+
+Lee las tareas y subtareas de las listas del espacio **Plataformas Alternas**
+(`CLICKUP_SPACE_ID`), filtrando por estado directamente en la API para
+descargar solo lo vigente (carga en segundos, no minutos).
+
+Estados analizados: abierto, en analisis, asignado, en desarrollo,
+en pruebas qa, en pruebas usuario, resuelto sin go live, aprobado-pendiente
+vo.bo. Se ignoran resuelto, cancelado, bloqueado, rechazado, etc.
+
 ## Como se calcula la capacidad (Opcion C)
 
 Replica el comportamiento del Workload de ClickUp:
