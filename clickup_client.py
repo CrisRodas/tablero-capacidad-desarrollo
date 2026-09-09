@@ -83,8 +83,10 @@ class ClickUpClient:
 
     # ----- Tiempo programado (tareas con estimados) -----
 
-    def iter_tasks(self, list_id: str) -> Iterator[dict[str, Any]]:
-        """Itera todas las tareas de una lista (con paginacion)."""
+    def iter_tasks(
+        self, list_id: str, list_name: str | None = None
+    ) -> Iterator[dict[str, Any]]:
+        """Itera todas las tareas y subtareas de una lista (con paginacion)."""
         page = 0
         while True:
             data = self._get(
@@ -98,7 +100,10 @@ class ClickUpClient:
             tasks = data.get("tasks", [])
             if not tasks:
                 break
-            yield from tasks
+            for t in tasks:
+                if list_name and not (t.get("list") or {}).get("name"):
+                    t["list"] = {"name": list_name}
+                yield t
             if data.get("last_page"):
                 break
             page += 1

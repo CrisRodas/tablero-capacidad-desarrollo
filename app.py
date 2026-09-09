@@ -12,11 +12,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from clickup_client import ClickUpClient, ClickUpError
-from data_processing import (
-    build_capacity_summary,
-    tasks_to_df,
-    time_entries_to_df,
-)
+from data_processing import build_capacity_summary, tasks_to_df
 
 load_dotenv()
 
@@ -37,17 +33,12 @@ def get_client() -> ClickUpClient:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_executed(token: str, team_id: str, start: datetime, end: datetime):
-    client = ClickUpClient(token, team_id)
-    return time_entries_to_df(client.get_time_entries(start, end))
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def load_scheduled(token: str, team_id: str, list_ids: tuple[str, ...]):
+def load_tasks(token: str, team_id: str, list_map: tuple[tuple[str, str], ...]):
+    """Carga tareas+subtareas (estimado y ejecutado) de las listas dadas."""
     client = ClickUpClient(token, team_id)
     all_tasks = []
-    for lid in list_ids:
-        all_tasks.extend(list(client.iter_tasks(lid)))
+    for lid, lname in list_map:
+        all_tasks.extend(list(client.iter_tasks(lid, lname)))
     return tasks_to_df(all_tasks)
 
 
@@ -89,17 +80,16 @@ capacity = st.sidebar.number_input(
 )
 
 today = datetime.now()
-default_start = today - timedelta(days=today.weekday(), weeks=0)
-col_a, col_b = st.sidebar.columns(2)
-start_date = col_a.date_input("Desde", value=default_start.date())
-end_date = col_b.date_input("Hasta", value=today.date())
-
-start_dt = datetime.combine(start_date, datetime.min.time())
-end_dt = datetime.combine(end_date, datetime.max.time())
-num_weeks = max((end_date - start_date).days / 7, 1)
+num_weeks = st.sidebar.number_input(
+    "Ventana de capacidad (semanas)",
+    min_value=1,
+    value=1,
+    step=1,
+    help="Contra cuantas semanas de capacidad se compara la carga programada.",
+)
 
 st.title("Tablero de Capacidad de Desarrollo")
-st.caption("Datos extraidos de ClickUp: horas ejecutadas vs programadas")
+st.caption("Datos de ClickUp: duracion estimada (programado) vs tiempo registrado (ejecutado)")
 
 if not st.session_state["token"] or not st.session_state["team_id"]:
     st.info("Ingresa tu API Token y Team ID en la barra lateral para comenzar.")
@@ -114,34 +104,31 @@ except ClickUpError as e:
     st.error(f"No se pudo conectar con ClickUp: {e}")
     st.stop()
 
-st.sidebar.markdown("### Listas a incluir (programado)")
-selected_list_ids: list[str] = []
+st.sidebar.markdown("### Listas a incluir")
+selected_lists: list[tuple[str, str]] = []
 for space_name, lists in spaces.items():
     with st.sidebar.expander(space_name, expanded=False):
         for lid, lname in lists:
             if st.checkbox(lname, key=f"list_{lid}"):
-                selected_list_ids.append(lid)
+                selected_lists.append((lid, lname))
 
 if st.sidebar.button("Actualizar datos"):
     st.cache_data.clear()
 
 # ---------------- Carga de datos ----------------
 
+if not selected_lists:
+    st.info("Selecciona al menos una lista en la barra lateral para ver la capacidad.")
+    st.stop()
+
 with st.spinner("Cargando datos de ClickUp..."):
-    executed = load_executed(
-        st.session_state["token"], st.session_state["team_id"], start_dt, end_dt
-    )
-    scheduled = (
-        load_scheduled(
-            st.session_state["token"],
-            st.session_state["team_id"],
-            tuple(selected_list_ids),
-        )
-        if selected_list_ids
-        else pd.DataFrame()
+    tasks_df = load_tasks(
+        st.session_state["token"],
+        st.session_state["team_id"],
+        tuple(selected_lists),
     )
 
-summary = build_capacity_summary(executed, scheduled, capacity, int(round(num_weeks)))
+summary = build_capacity_summary(tasks_df, capacity, int(num_weeks))
 
 # ---------------- KPIs ----------------
 
@@ -191,13 +178,35 @@ st.dataframe(
     hide_index=True,
 )
 
+# ---------------- Detalle de tareas por desarrollador ----------------
+
+st.subheader("Detalle de tareas")
+devs = ["(Todos)"] + sorted(tasks_df["developer"].unique().tolist())
+sel_dev = st.selectbox("Filtrar por desarrollador", devs)
+detalle = tasks_df if sel_dev == "(Todos)" else tasks_df[tasks_df["developer"] == sel_dev]
+st.dataframe(
+    detalle[
+        ["developer", "task_name", "list_name", "hours_scheduled", "hours_executed", "status"]
+    ].rename(
+        columns={
+            "developer": "Desarrollador",
+            "task_name": "Tarea",
+            "list_name": "Lista",
+            "hours_scheduled": "Estimado (h)",
+            "hours_executed": "Ejecutado (h)",
+            "status": "Estado",
+        }
+    ),
+    use_container_width=True,
+    hide_index=True,
+)
+
 # ---------------- Exportacion ----------------
 
 st.subheader("Exportar tablero")
 sheets = {
     "Resumen_Capacidad": summary,
-    "Horas_Ejecutadas": executed,
-    "Horas_Programadas": scheduled if not scheduled.empty else pd.DataFrame(),
+    "Detalle_Tareas": tasks_df,
 }
 excel_bytes = to_excel_bytes(sheets)
 
