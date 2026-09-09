@@ -135,6 +135,7 @@ def tasks_to_df(
         status_type_val = (t.get("status", {}) or {}).get("type", "")
         due_dt = _ms_to_date(t.get("due_date"))
         list_name = (t.get("list", {}) or {}).get("name", "")
+        parent_id = t.get("parent")
 
         assignees = t.get("assignees", []) or []
         if team_assignee_ids:
@@ -154,6 +155,7 @@ def tasks_to_df(
                     "developer": a.get("username") or a.get("email") or "Sin asignar",
                     "developer_id": a.get("id"),
                     "task_name": t.get("name", ""),
+                    "parent_id": parent_id,
                     "list_name": list_name,
                     "hours_scheduled": share_est,
                     "hours_executed": share_spent,
@@ -169,6 +171,37 @@ def tasks_to_df(
 def is_active_status(status_type: str) -> bool:
     """True si el estado NO esta terminado (no es done ni closed)."""
     return status_type not in ("done", "closed")
+
+
+def add_parent_names(
+    df: pd.DataFrame, raw_tasks: list[dict], name_resolver=None
+) -> pd.DataFrame:
+    """Agrega la columna 'parent_task' con el nombre de la tarea padre.
+
+    Usa los nombres de las tareas del lote; para padres que no esten en el
+    lote, usa name_resolver(ids) -> {id: nombre} (llamadas a la API).
+    """
+    if df.empty or "parent_id" not in df.columns:
+        df["parent_task"] = ""
+        return df
+
+    id_to_name = {t.get("id"): t.get("name", "") for t in raw_tasks}
+
+    # Padres que faltan en el lote
+    missing = {
+        pid for pid in df["parent_id"].dropna().unique()
+        if pid not in id_to_name
+    }
+    if missing and name_resolver:
+        id_to_name.update(name_resolver(list(missing)))
+
+    def _resolve(pid):
+        if pid is None or (isinstance(pid, float) and pd.isna(pid)) or pid == "":
+            return "(tarea principal)"
+        return id_to_name.get(pid) or f"(padre {pid})"
+
+    df["parent_task"] = df["parent_id"].map(_resolve)
+    return df
 
 
 def build_capacity_summary(

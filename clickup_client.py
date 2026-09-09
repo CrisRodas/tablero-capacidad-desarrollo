@@ -182,6 +182,26 @@ class ClickUpClient:
         """Devuelve la metadata de una vista."""
         return self._get(f"/view/{view_id}").get("view", {})
 
+    def get_task_names(
+        self, task_ids: list[str], max_workers: int = 8
+    ) -> dict[str, str]:
+        """Resuelve el nombre de varias tareas por su ID, en paralelo."""
+        if not task_ids:
+            return {}
+
+        def fetch(tid: str) -> tuple[str, str]:
+            try:
+                data = self._get(f"/task/{tid}")
+                return tid, data.get("name", "")
+            except ClickUpError:
+                return tid, ""
+
+        result: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for tid, name in pool.map(fetch, task_ids):
+                result[tid] = name
+        return result
+
     def get_spaces(self) -> list[dict[str, Any]]:
         data = self._get(f"/team/{self.team_id}/space", params={"archived": "false"})
         return data.get("spaces", [])

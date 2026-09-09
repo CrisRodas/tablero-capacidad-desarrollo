@@ -17,7 +17,12 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from clickup_client import ClickUpClient, ClickUpError
-from data_processing import build_capacity_summary, is_active_status, tasks_to_df
+from data_processing import (
+    add_parent_names,
+    build_capacity_summary,
+    is_active_status,
+    tasks_to_df,
+)
 
 load_dotenv()
 
@@ -232,10 +237,13 @@ def render_person_view(
     st.subheader("Detalle de tareas")
     detalle = dev_tasks.copy()
     detalle["desviacion"] = (detalle["hours_executed"] - detalle["hours_scheduled"]).round(1)
+    parent_col = ["parent_task"] if "parent_task" in detalle.columns else []
     detalle_disp = detalle[
-        ["task_name", "list_name", "hours_scheduled", "hours_executed", "desviacion", "status"]
+        ["task_name", *parent_col, "list_name",
+         "hours_scheduled", "hours_executed", "desviacion", "status"]
     ].rename(columns={
-        "task_name": "Tarea",
+        "task_name": "Tarea / Subtarea",
+        "parent_task": "Tarea padre",
         "list_name": "Lista",
         "hours_scheduled": "Estimado (h)",
         "hours_executed": "Ejecutado (h)",
@@ -349,6 +357,12 @@ tasks_df = tasks_to_df(
     period_start=period_start,
     period_end=period_end,
     team_assignee_ids=TEAM_ASSIGNEE_IDS if only_team else None,
+)
+
+# Resolver el nombre de la tarea padre de cada subtarea
+_client = ClickUpClient(token, team_id)
+tasks_df = add_parent_names(
+    tasks_df, raw_tasks, name_resolver=_client.get_task_names
 )
 
 # Capacidad proporcional a los dias laborales del periodo
