@@ -120,12 +120,17 @@ def inject_css() -> None:
         /* Dataframes y widgets en oscuro */
         div[data-testid="stDataFrame"] {{ background:{t['surface']}; border-radius:10px; }}
 
-        /* Ocultar barra superior de Streamlit (Deploy, menu, footer) */
-        header[data-testid="stHeader"] {{ display: none !important; }}
+        /* Barra superior de Streamlit: transparente y sin altura */
+        header[data-testid="stHeader"] {{
+            background: {t['bg']} !important;
+            height: 0 !important;
+            min-height: 0 !important;
+        }}
         div[data-testid="stToolbar"] {{ display: none !important; }}
         div[data-testid="stToolbarActions"] {{ display: none !important; }}
         div[data-testid="stDecoration"] {{ display: none !important; }}
         [data-testid="stAppDeployButton"] {{ display: none !important; }}
+        button[kind="header"] {{ display: none !important; }}
         .stDeployButton {{ display: none !important; }}
         #MainMenu {{ display: none !important; }}
         footer {{ display: none !important; }}
