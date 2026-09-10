@@ -111,6 +111,14 @@ def inject_css() -> None:
 
         /* Dataframes y widgets en oscuro */
         div[data-testid="stDataFrame"] {{ background:{t['surface']}; border-radius:10px; }}
+
+        /* Ocultar barra superior de Streamlit (Deploy, menu, footer) */
+        header[data-testid="stHeader"] {{ background: transparent; }}
+        div[data-testid="stToolbar"] {{ display: none; }}
+        #MainMenu {{ visibility: hidden; }}
+        footer {{ visibility: hidden; }}
+        .stDeployButton {{ display: none; }}
+        a[href*="streamlit.io/cloud"] {{ display: none !important; }}
         </style>
         """,
         unsafe_allow_html=True,
