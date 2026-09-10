@@ -59,8 +59,10 @@ def inject_css() -> None:
     st.markdown(
         f"""
         <style>
-        .stApp {{ background: {t['bg']}; }}
-        .block-container {{ padding-top: 2rem; padding-bottom: 3rem; max-width: 1300px; }}
+        .stApp {{ background: {t['bg']} !important; }}
+        div[data-testid="stAppViewContainer"] {{ background: {t['bg']} !important; }}
+        div[data-testid="stMain"] {{ background: {t['bg']} !important; }}
+        .block-container {{ padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1300px; }}
 
         /* Textos generales al color del tema */
         .stApp, .stMarkdown, p, span, label, h1, h2, h3, h4, h5, h6 {{ color: {t['text']}; }}
@@ -113,12 +115,15 @@ def inject_css() -> None:
         div[data-testid="stDataFrame"] {{ background:{t['surface']}; border-radius:10px; }}
 
         /* Ocultar barra superior de Streamlit (Deploy, menu, footer) */
-        header[data-testid="stHeader"] {{ background: transparent; }}
-        div[data-testid="stToolbar"] {{ display: none; }}
-        #MainMenu {{ visibility: hidden; }}
-        footer {{ visibility: hidden; }}
-        .stDeployButton {{ display: none; }}
-        a[href*="streamlit.io/cloud"] {{ display: none !important; }}
+        header[data-testid="stHeader"] {{ display: none !important; }}
+        div[data-testid="stToolbar"] {{ display: none !important; }}
+        div[data-testid="stToolbarActions"] {{ display: none !important; }}
+        div[data-testid="stDecoration"] {{ display: none !important; }}
+        [data-testid="stAppDeployButton"] {{ display: none !important; }}
+        .stDeployButton {{ display: none !important; }}
+        #MainMenu {{ display: none !important; }}
+        footer {{ display: none !important; }}
+        a[href*="streamlit.io"] {{ display: none !important; }}
         </style>
         """,
         unsafe_allow_html=True,
