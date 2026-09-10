@@ -24,7 +24,14 @@ from data_processing import (
     is_active_status,
     tasks_to_df,
 )
-from ui import header, inject_css, kpi_card, kpi_row, status_badge
+from ui import (
+    header,
+    inject_css,
+    kpi_card,
+    kpi_row,
+    plotly_theme,
+    status_badge,
+)
 
 load_dotenv()
 
@@ -32,6 +39,16 @@ st.set_page_config(
     page_title="Capacidad Plataformas Alternas",
     page_icon="📊",
     layout="wide",
+)
+
+# Selector de tema (claro/oscuro). Se lee antes de inyectar el CSS.
+if "theme" not in st.session_state:
+    st.session_state.theme = "Claro"
+st.sidebar.radio(
+    "🎨 Tema",
+    ["Claro", "Oscuro"],
+    key="theme",
+    horizontal=True,
 )
 
 inject_css()
@@ -152,12 +169,8 @@ def build_workload_chart(
         margin=dict(l=10, r=10, t=20, b=10),
         bargap=0.3,
         legend_title="Estado",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="sans-serif", color="#1f2937"),
     )
-    fig.update_xaxes(gridcolor="#eef0f6")
-    return fig
+    return plotly_theme(fig)
 
 
 def render_person_view(
@@ -218,7 +231,7 @@ def render_person_view(
         margin=dict(l=10, r=10, t=20, b=10),
         legend=dict(orientation="h", y=1.05),
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(plotly_theme(fig), width="stretch")
 
     # Distribucion por lista/proyecto
     col_a, col_b = st.columns(2)
@@ -234,7 +247,7 @@ def render_person_view(
                 by_list, names="list_name", values="hours_scheduled", hole=0.4,
             )
             fig_pie.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10))
-            st.plotly_chart(fig_pie, width="stretch")
+            st.plotly_chart(plotly_theme(fig_pie), width="stretch")
         else:
             st.caption("Sin horas estimadas por lista.")
 
