@@ -41,17 +41,28 @@ st.set_page_config(
     layout="wide",
 )
 
-# Selector de tema (claro/oscuro). Se lee antes de inyectar el CSS.
+# Tema (claro/oscuro): el valor se lee antes de inyectar el CSS.
 if "theme" not in st.session_state:
     st.session_state.theme = "Claro"
-st.sidebar.radio(
-    "🎨 Tema",
-    ["Claro", "Oscuro"],
-    key="theme",
-    horizontal=True,
-)
 
 inject_css()
+
+# Barra superior con el selector de tema alineado a la derecha
+topbar_left, topbar_right = st.columns([3, 1])
+with topbar_right:
+    st.segmented_control(
+        "Tema",
+        ["☀️ Claro", "🌙 Oscuro"],
+        key="theme_choice",
+        default="☀️ Claro" if st.session_state.theme == "Claro" else "🌙 Oscuro",
+        label_visibility="collapsed",
+    )
+# Sincronizar la eleccion con el estado usado por el CSS
+_choice = st.session_state.get("theme_choice") or "☀️ Claro"
+_new_theme = "Oscuro" if "Oscuro" in _choice else "Claro"
+if _new_theme != st.session_state.theme:
+    st.session_state.theme = _new_theme
+    st.rerun()
 
 # Bloquea el acceso hasta autenticar (fail-closed)
 require_login()

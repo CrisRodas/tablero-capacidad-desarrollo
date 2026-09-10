@@ -111,6 +111,12 @@ def inject_css() -> None:
             background:{t['surface']}; border-right:1px solid {t['border']};
         }}
 
+        /* Selector de tema (segmented control) alineado a la derecha */
+        div[data-testid="stSegmentedControl"] {{ justify-content: flex-end; }}
+        div[data-testid="stSegmentedControl"] button {{
+            border-radius: 8px; font-weight:600;
+        }}
+
         /* Dataframes y widgets en oscuro */
         div[data-testid="stDataFrame"] {{ background:{t['surface']}; border-radius:10px; }}
 

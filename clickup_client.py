@@ -33,7 +33,7 @@ class ClickUpClient:
     def _get(self, path: str, params: dict | None = None) -> dict[str, Any]:
         url = f"{BASE_URL}{path}"
         for attempt in range(5):
-            resp = self._session.get(url, params=params, timeout=30)
+            resp = self._session.get(url, params=params, timeout=60)
             if resp.status_code == 429:
                 # Rate limit: esperar y reintentar
                 wait = int(resp.headers.get("Retry-After", 2 ** attempt))
