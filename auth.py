@@ -8,19 +8,20 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 
 import streamlit as st
+
+from config import get_setting
 
 
 def _password_ok(entered: str) -> bool:
     """Compara la contrasena ingresada de forma segura (timing-safe)."""
-    hashed = os.getenv("APP_PASSWORD_SHA256", "").strip().lower()
+    hashed = get_setting("APP_PASSWORD_SHA256", "").strip().lower()
     if hashed:
         digest = hashlib.sha256(entered.encode("utf-8")).hexdigest()
         return hmac.compare_digest(digest, hashed)
 
-    plain = os.getenv("APP_PASSWORD", "")
+    plain = get_setting("APP_PASSWORD", "")
     if plain:
         return hmac.compare_digest(entered, plain)
 
@@ -33,7 +34,7 @@ def require_login() -> None:
     Si no hay contrasena configurada, muestra un aviso y detiene la app
     (fail-closed: no se expone data sin proteccion).
     """
-    if not os.getenv("APP_PASSWORD_SHA256") and not os.getenv("APP_PASSWORD"):
+    if not get_setting("APP_PASSWORD_SHA256") and not get_setting("APP_PASSWORD"):
         st.error(
             "Acceso no configurado. Define APP_PASSWORD_SHA256 (o APP_PASSWORD) "
             "en el entorno antes de usar el tablero."

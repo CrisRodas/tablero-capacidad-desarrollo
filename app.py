@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 from auth import require_login
 from clickup_client import ClickUpClient, ClickUpError
+from config import get_setting
 from data_processing import (
     add_parent_names,
     build_capacity_summary,
@@ -319,14 +320,14 @@ def render_person_view(
 
 st.sidebar.title("Configuracion")
 
-# Credenciales y vista tomadas del .env (no se muestran en la interfaz)
-token = os.getenv("CLICKUP_API_TOKEN", "")
-team_id = os.getenv("CLICKUP_TEAM_ID", "")
-space_id = os.getenv("CLICKUP_SPACE_ID", DEFAULT_SPACE_ID)
+# Credenciales tomadas de secrets/.env (no se muestran en la interfaz)
+token = get_setting("CLICKUP_API_TOKEN", "")
+team_id = get_setting("CLICKUP_TEAM_ID", "")
+space_id = get_setting("CLICKUP_SPACE_ID", DEFAULT_SPACE_ID)
 capacity = st.sidebar.number_input(
     "Capacidad (horas/semana por dev)",
     min_value=1.0,
-    value=float(os.getenv("CAPACITY_HOURS_PER_WEEK", "40")),
+    value=float(get_setting("CAPACITY_HOURS_PER_WEEK", "40")),
     step=1.0,
 )
 st.sidebar.markdown("### Periodo a analizar")
